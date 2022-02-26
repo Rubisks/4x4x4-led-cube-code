@@ -1,0 +1,187 @@
+#include "msp.h"
+
+#define DATA BIT0 // DS -> 6.0 AKA SER
+
+#define CLOCK BIT1 // SH_CP -> 6.1 AKA SRCLK
+
+#define LATCH BIT2 // ST_CP -> 6.2 AKA RCLK
+
+#define S1 BIT1 // Swith 1.1 on the board
+
+void send(long output, long layer, int color);
+
+void pulseClock(int times);
+
+// holds the digital value for the LED color
+int color;
+
+int main(void){
+    
+    WDT_A->CTL = WDT_A_CTL_PW | WDT_A_CTL_HOLD;     // stop watchdog timer
+
+    P6->DIR |= 0x0f;              //p6 set port 6 as output pins
+    P6->OUT = 0x00;               // set all outputs to zero
+
+
+    // Configure the interrupt
+    P1->DIR &= ~S1; // set up pin P1.1 (DA (interrupt pin)) as input
+    P1->REN |= S1;  // connect pull resistor to pin P1.1
+    P1->OUT |= S1;  // configure pull resistor as pull up
+    P1->IFG &= ~S1; // clear interrupt flag for pin P1.1 (DA (int pin))
+    P1->IE |= S1;  // enable the interrupt for pin P1.1(DA (interrupt pin))
+    NVIC->ISER[1] |= 0x08; // enable port 1 interrupts
+    _enable_interrupts();
+
+
+   // configures the ADC
+    ADC14->CTL0 = 0x00000010;
+    ADC14->CTL0 |= 0x04080310;
+    ADC14->CTL1 = 0X00000020;
+    ADC14->MCTL[5] = 0X06;
+    P4->SEL1 |= 0X80;
+    P4->SEL0 |= 0X80;
+    ADC14->CTL1 |= 0X00050000;
+    ADC14->CTL0 |= 0X02;
+
+    // this loop runds thhrough the LEDS and allows them to be updates to new colors
+    while(1)
+    {
+        send(0x1000,0xF0, color);// lights to be turned on
+        send(0x2000,0xF0, color);// lights to be turned on
+        send(0x4000,0xF0, color);// lights to be turned on
+
+
+        send(0x8000,0xF0, color);// lights to be turned on
+
+        send(0x0100,0xF0, color);// lights to be turned on
+        send(0x0200,0xF0, color);// lights to be turned on
+        send(0x0400,0xF0, color);// lights to be turned on
+        send(0x0800,0xF0, color);// lights to be turned on
+
+        send(0x0010,0xF0, color);// lights to be turned on
+        send(0x0020,0xF0, color);// lights to be turned on
+        send(0x0040,0xF0, color);// lights to be turned on
+        send(0x0080,0xF0, color);// lights to be turned on
+
+        send(0x0001,0xF0, color);// lights to be turned on
+        send(0x0002,0xF0, color);// lights to be turned on
+        send(0x0004,0xF0, color);// lights to be turned on
+        send(0x0008,0xF0, color);// lights to be turned on
+
+    }
+
+}
+
+// sends the data too the shift regesets and shifts it to the correct place.
+void send(long output, long layer, int color)
+{
+    int i;
+
+    // this loop cycles through the values for the positive side of the leds.
+    for(i = 0; i <= 15; i++)
+    {
+       int b = 0;
+       b = (output & 0x01);
+
+        if(b) // if the LED should be turned on output color values to the LED
+        {
+
+            int j;
+            // loops through the color values and pushes them out to the shift regester
+            for(j = 0; j < 3; j++)
+
+            {
+                
+                int c = 0;
+                c = (color & 0x01);
+
+                if(c)
+                {
+                    P6->OUT &= ~DATA;
+                }
+                else
+                {
+                    P6->OUT |= DATA;
+                }
+
+                color >>= 1;
+                
+                //shift out the value on the data wire to the Shift regester
+                pulseClock(1);
+
+            }
+
+        }
+
+
+        else
+        {
+
+            P6->OUT &= ~DATA; // if the LSB is 0 the data pin will be set low
+            //shift out the value on the data wire to the Shift regester
+            pulseClock(3);
+
+        }
+
+        output >>= 1;        // sifts the data to the right one moving to the next bit
+    }
+
+
+    // This loop  cycles through the values for the layer position of the LEDs
+    for(i = 0; i <= 7; i++)
+    {
+       int b = 0;
+       b = (layer & 0x01);
+
+        if(b)
+        {
+            P6->OUT |= DATA; // if the LSB is 1 the data pin will be set high
+        }
+        else
+        {
+            P6->OUT &= ~DATA; // if the LSB is 0 the data pin will be set low
+
+        }
+
+        pulseClock(1);
+        layer >>= 1;        // sifts the data to the right one moving to the next bit
+    }
+
+
+    P6->OUT |= LATCH;
+    P6->OUT &= ~LATCH;      // once all of the bits have been shifted in the latch pin moves them to the outputs.
+}
+
+// puses the clock a given amount of times
+void pulseClock(int times)
+{
+    int t;
+
+    for(t = 0; t < times; t++)
+    {
+        P6->OUT |= CLOCK;    // Clock is pulsed in to move the bit on the data wire into memory
+        P6->OUT &= ~CLOCK;
+    }
+
+}
+
+
+// handles S1 being pushed
+void PORT1_IRQHandler(void)
+{
+
+  uint32_t status;
+
+  status = P1->IFG;    // get the interrupt status for port 1
+  P1->IFG &= ~BIT1;    // clear the interrupt for port 1, pin 1
+
+  if(status & BIT1) // if SW was pressed
+  {
+      // start the ADC convention
+      ADC14->CTL0 |=1;
+      while (!ADC14->IFGR0);
+      color = ADC14->MEM[5];
+      color >>= 8;// shifts the last three bits to the front
+
+  }
+}
